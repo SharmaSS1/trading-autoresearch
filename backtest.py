@@ -106,9 +106,9 @@ def run_strategy(df):
     """
     EMA crossover + RSI momentum filter + ATR trailing stop.
 
-    Changes from iter 3:
-    - Add MACD histogram confirmation for short entries (was missing)
-    - Add volume filter: only enter when volume > 1.2x 20-period average
+    Changes from iter 11:
+    - Add ADX trend strength filter (only enter when ADX > 20)
+    - Widen ATR trailing multiplier from 2.5 to 3.0 to let winners run longer
     """
     # --- Parameters ---
     fast_ema = 9
@@ -117,13 +117,15 @@ def run_strategy(df):
     rsi_period = 14
     rsi_upper = 65
     atr_period = 14
-    atr_trail_multiplier = 2.5
+    atr_trail_multiplier = 3.0
     position_size = 1000.0
     macd_fast = 12
     macd_slow = 26
     macd_signal = 9
     vol_period = 20
     vol_mult = 1.2
+    adx_period = 14
+    adx_threshold = 20
 
     # --- Indicators ---
     df = df.copy()
@@ -160,6 +162,18 @@ def run_strategy(df):
     # Volume filter
     df["vol_avg"] = df["volume"].rolling(window=vol_period).mean()
 
+    # ADX (Average Directional Index) for trend strength
+    plus_dm = df["high"].diff()
+    minus_dm = -df["low"].diff()
+    plus_dm = plus_dm.where((plus_dm > minus_dm) & (plus_dm > 0), 0.0)
+    minus_dm = minus_dm.where((minus_dm > plus_dm) & (minus_dm > 0), 0.0)
+    atr_for_adx = true_range.ewm(span=adx_period, adjust=False).mean()
+    plus_di = 100 * (plus_dm.ewm(span=adx_period, adjust=False).mean() / atr_for_adx.replace(0, np.nan))
+    minus_di = 100 * (minus_dm.ewm(span=adx_period, adjust=False).mean() / atr_for_adx.replace(0, np.nan))
+    dx = 100 * ((plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan))
+    df["adx"] = dx.ewm(span=adx_period, adjust=False).mean()
+    df["adx"] = df["adx"].fillna(0)
+
     # --- Signal generation (no look-ahead) ---
     trades = []
     position = None
@@ -186,28 +200,31 @@ def run_strategy(df):
         vol = df["volume"].iloc[i]
         vol_avg = df["vol_avg"].iloc[i]
         vol_ok = vol > vol_mult * vol_avg if pd.notna(vol_avg) else False
+        adx_val = df["adx"].iloc[i]
 
         if position is None:
-            # Long entry: EMA crossover + trend + RSI filter + MACD histogram positive
+            # Long entry: EMA crossover + trend + RSI filter + MACD histogram positive + ADX
             if (prev_ema_f <= prev_ema_s and ema_f > ema_s
                     and price > ema_t
                     and rsi < rsi_upper
                     and macd_hist > 0
                     and vol_ok
-                    and atr > 0):
+                    and atr > 0
+                    and adx_val > adx_threshold):
                 position = "long"
                 entry_idx = i
                 entry_price = price
                 highest_close = price
                 stop_price = price - atr_trail_multiplier * atr
 
-            # Short entry: EMA crosses down + below trend + RSI not oversold + MACD hist negative
+            # Short entry: EMA crosses down + below trend + RSI not oversold + MACD hist negative + ADX
             elif (prev_ema_f >= prev_ema_s and ema_f < ema_s
                     and price < ema_t
                     and rsi > rsi_lower
                     and macd_hist < 0
                     and vol_ok
-                    and atr > 0):
+                    and atr > 0
+                    and adx_val > adx_threshold):
                 position = "short"
                 entry_idx = i
                 entry_price = price
