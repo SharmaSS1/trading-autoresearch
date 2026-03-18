@@ -117,7 +117,7 @@ def run_strategy(df):
     rsi_period = 14
     rsi_upper = 60
     atr_period = 14
-    atr_trail_multiplier = 4.9
+    atr_trail_multiplier = 5.6
     breakeven_atr_mult = 99.0  # Disabled: Move stop to breakeven after this many ATR in profit
     take_profit_atr_mult = 99.0  # Disabled for now
     position_size = 1000.0
