@@ -148,13 +148,13 @@ def run_strategy(df):
     atr_trail_mult = 1.3   # trailing stop distance
     atr_trail_tight = 0.9  # tighter trail once trade is well in profit
     trail_tighten_threshold = 1.8  # tighten trail after price moves 1.8x ATR in favor
-    position_size = 276.0
+    position_size = 263.0
     max_hold_bars = 30      # max bars to hold a position
-    breakeven_atr_mult = 0.55  # move stop to entry after price moves 0.55x ATR in favor (faster BE)
+    breakeven_atr_mult = 0.52  # move stop to entry after price moves 0.52x ATR in favor
     vol_period = 20         # volume moving average period
     vol_mult = 0.5          # volume must be >= 0.5x average (allow more trades)
     # RSI thresholds for pullback detection
-    rsi_pullback_low = 42
+    rsi_pullback_low = 41
     rsi_recover_low = 46
     rsi_pullback_high = 58
     rsi_recover_high = 54
@@ -344,7 +344,7 @@ def run_strategy(df):
             # ADX 25 -> 0.7x size, ADX 40+ -> 1.0x size
             adx_scale = min(1.0, 0.7 + 0.3 * (adx - adx_threshold) / 15.0) if adx > adx_threshold else 0.7
             # Reduce size after a loss to limit consecutive-loss drawdown
-            loss_scale = 0.65 if not last_trade_won and (i - last_trade_exit < 35) else 1.0
+            loss_scale = 0.7 if not last_trade_won and (i - last_trade_exit < 130) else 1.0
             trade_size = position_size * adx_scale * loss_scale
 
             if not in_cooldown and uptrend and strong_trend and volume_confirmed and long_pullback_ready and rsi > rsi_recover_low and rsi < 70:
