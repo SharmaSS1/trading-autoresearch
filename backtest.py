@@ -125,28 +125,33 @@ def compute_metrics(trades, df):
 
 def run_strategy(df):
     """
-    Clean baseline: EMA 9/21 crossover + RSI momentum filter.
+    EMA 20/50 crossover + ADX trend filter + ATR-based stops and take-profit.
 
-    Entry:
-      - Long:  EMA9 crosses above EMA21, RSI > 50
-      - Short: EMA9 crosses below EMA21, RSI < 50
-    Exit:
-      - Opposite crossover signal, OR stop-loss at 3% from entry
+    Improvements over baseline:
+      - Wider EMAs (20/50) to reduce whipsaw in choppy markets
+      - ADX filter: only enter when ADX > 20 (confirmed trend)
+      - ATR-based stop loss (1.5x ATR) and take profit (3x ATR)
+      - RSI extreme filter: avoid buying overbought / selling oversold
     """
     # --- Parameters ---
-    fast_ema = 9
-    slow_ema = 21
+    fast_ema = 20
+    slow_ema = 50
     rsi_period = 14
-    stop_loss_pct = 0.03   # 3% stop loss
-    position_size = 1000.0  # dollars per trade
+    atr_period = 14
+    adx_period = 14
+    adx_threshold = 20
+    atr_sl_mult = 1.5    # stop loss = 1.5x ATR
+    atr_tp_mult = 3.0    # take profit = 3x ATR
+    position_size = 1000.0
 
     # --- Indicators ---
     df = df.copy()
 
+    # EMAs
     df["ema_fast"] = df["close"].ewm(span=fast_ema, adjust=False).mean()
     df["ema_slow"] = df["close"].ewm(span=slow_ema, adjust=False).mean()
 
-    # EMA crossover signal: 1=bullish, -1=bearish
+    # EMA crossover signal
     df["cross"] = np.where(df["ema_fast"] > df["ema_slow"], 1, -1)
     df["cross_prev"] = df["cross"].shift(1)
 
@@ -159,26 +164,63 @@ def run_strategy(df):
     rs = avg_gain / avg_loss.replace(0, np.nan)
     df["rsi"] = (100 - (100 / (1 + rs))).fillna(50)
 
+    # ATR
+    high = df["high"]
+    low = df["low"]
+    prev_close = df["close"].shift(1)
+    tr = pd.concat([
+        high - low,
+        (high - prev_close).abs(),
+        (low - prev_close).abs()
+    ], axis=1).max(axis=1)
+    df["atr"] = tr.ewm(span=atr_period, adjust=False).mean()
+
+    # ADX
+    plus_dm = (high - high.shift(1)).clip(lower=0)
+    minus_dm = (low.shift(1) - low).clip(lower=0)
+    # Zero out when the other is larger
+    plus_dm = np.where(plus_dm > minus_dm, plus_dm, 0.0)
+    minus_dm_arr = np.where(minus_dm > pd.Series(np.where(plus_dm > 0, 0, minus_dm.values), index=df.index), minus_dm, 0.0)
+    # Recalculate properly
+    raw_plus = (high - high.shift(1))
+    raw_minus = (low.shift(1) - low)
+    plus_dm = np.where((raw_plus > raw_minus) & (raw_plus > 0), raw_plus, 0.0)
+    minus_dm = np.where((raw_minus > raw_plus) & (raw_minus > 0), raw_minus, 0.0)
+
+    plus_dm_s = pd.Series(plus_dm, index=df.index).ewm(span=adx_period, adjust=False).mean()
+    minus_dm_s = pd.Series(minus_dm, index=df.index).ewm(span=adx_period, adjust=False).mean()
+
+    plus_di = 100 * plus_dm_s / df["atr"].replace(0, np.nan)
+    minus_di = 100 * minus_dm_s / df["atr"].replace(0, np.nan)
+
+    dx = (abs(plus_di - minus_di) / (plus_di + minus_di).replace(0, np.nan) * 100).fillna(0)
+    df["adx"] = dx.ewm(span=adx_period, adjust=False).mean()
+
     # --- Trade loop ---
     trades = []
     position = None
     entry_price = None
     entry_idx = None
-    warmup = slow_ema + rsi_period + 2
+    stop_price = None
+    tp_price = None
+    warmup = slow_ema + adx_period + 5
 
     for i in range(warmup, len(df) - 1):
         close = df["close"].iloc[i]
         cross = df["cross"].iloc[i]
         cross_prev = df["cross_prev"].iloc[i]
         rsi = df["rsi"].iloc[i]
+        atr = df["atr"].iloc[i]
+        adx = df["adx"].iloc[i]
 
         bullish_cross = (cross == 1) and (cross_prev == -1)
         bearish_cross = (cross == -1) and (cross_prev == 1)
 
         # Exit logic
         if position == "long":
-            hit_stop = close <= entry_price * (1 - stop_loss_pct)
-            if bearish_cross or hit_stop:
+            hit_stop = close <= stop_price
+            hit_tp = close >= tp_price
+            if bearish_cross or hit_stop or hit_tp:
                 trades.append({
                     "entry_idx": entry_idx, "exit_idx": i,
                     "entry_price": entry_price, "exit_price": close,
@@ -187,8 +229,9 @@ def run_strategy(df):
                 position = None
 
         elif position == "short":
-            hit_stop = close >= entry_price * (1 + stop_loss_pct)
-            if bullish_cross or hit_stop:
+            hit_stop = close >= stop_price
+            hit_tp = close <= tp_price
+            if bullish_cross or hit_stop or hit_tp:
                 trades.append({
                     "entry_idx": entry_idx, "exit_idx": i,
                     "entry_price": entry_price, "exit_price": close,
@@ -198,14 +241,18 @@ def run_strategy(df):
 
         # Entry logic
         if position is None:
-            if bullish_cross and rsi > 50:
+            if bullish_cross and rsi > 45 and rsi < 75 and adx > adx_threshold:
                 position = "long"
                 entry_price = close
                 entry_idx = i
-            elif bearish_cross and rsi < 50:
+                stop_price = close - atr_sl_mult * atr
+                tp_price = close + atr_tp_mult * atr
+            elif bearish_cross and rsi < 55 and rsi > 25 and adx > adx_threshold:
                 position = "short"
                 entry_price = close
                 entry_idx = i
+                stop_price = close + atr_sl_mult * atr
+                tp_price = close - atr_tp_mult * atr
 
     # Close open position at end
     if position is not None:
