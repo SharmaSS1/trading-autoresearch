@@ -148,6 +148,8 @@ def run_strategy(df):
     atr_trail_mult = 1.8   # trailing stop distance (tighter to lock profits)
     position_size = 1000.0
     max_hold_bars = 30      # max bars to hold a position
+    vol_period = 20         # volume moving average period
+    vol_mult = 0.8          # volume must be >= 0.8x average (filter only low-volume bars)
 
     # RSI thresholds for pullback detection (slightly relaxed to get more entries)
     rsi_pullback_low = 42
@@ -182,6 +184,9 @@ def run_strategy(df):
     ], axis=1).max(axis=1)
     df["atr"] = tr.ewm(span=atr_period, adjust=False).mean()
 
+    # Volume moving average for confirmation
+    df["vol_ma"] = df["volume"].rolling(window=vol_period).mean()
+
     # ADX (Average Directional Index)
     plus_dm = df["high"].diff()
     minus_dm = -df["low"].diff()
@@ -214,10 +219,13 @@ def run_strategy(df):
         ema_f = df["ema_fast"].iloc[i]
         ema_s = df["ema_slow"].iloc[i]
         adx = df["adx"].iloc[i]
+        vol = df["volume"].iloc[i]
+        vol_avg = df["vol_ma"].iloc[i]
 
         uptrend = ema_f > ema_s
         downtrend = ema_f < ema_s
         strong_trend = adx > adx_threshold
+        volume_confirmed = vol >= vol_mult * vol_avg if pd.notna(vol_avg) else False
 
         # Track RSI pullback states
         if rsi < rsi_pullback_low:
@@ -270,7 +278,7 @@ def run_strategy(df):
 
         # Entry logic: RSI pullback within trend
         if position is None:
-            if uptrend and strong_trend and long_pullback_ready and rsi > rsi_recover_low and rsi < 70:
+            if uptrend and strong_trend and volume_confirmed and long_pullback_ready and rsi > rsi_recover_low and rsi < 70:
                 position = "long"
                 entry_price = close
                 entry_idx = i
@@ -279,7 +287,7 @@ def run_strategy(df):
                 best_price = close
                 long_pullback_ready = False
 
-            elif downtrend and strong_trend and short_pullback_ready and rsi < rsi_recover_high and rsi > 30:
+            elif downtrend and strong_trend and volume_confirmed and short_pullback_ready and rsi < rsi_recover_high and rsi > 30:
                 position = "short"
                 entry_price = close
                 entry_idx = i

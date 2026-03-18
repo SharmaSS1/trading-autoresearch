@@ -1,6 +1,6 @@
 {
-  "best_score": 9.8626,
-  "iteration": 4,
+  "best_score": 14.1111,
+  "iteration": 6,
   "run_history": [
     {
       "iteration": 1,
@@ -13,8 +13,8 @@
       "result": "kept"
     },
     {
-      "iteration": 4,
-      "score": 9.8626,
+      "iteration": 6,
+      "score": 14.1111,
       "result": "kept"
     }
   ],
