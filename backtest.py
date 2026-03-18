@@ -143,7 +143,7 @@ def run_strategy(df):
     atr_period = 14
     adx_period = 14
     adx_threshold = 22     # minimum ADX to confirm trend (stricter)
-    atr_sl_mult = 1.5      # stop loss = 1.5x ATR (tighter to reduce loss variance)
+    atr_sl_mult = 1.2      # stop loss = 1.2x ATR (tighter to reduce loss variance)
     atr_tp_mult = 3.5      # take profit = 3.5x ATR
     atr_trail_mult = 1.3   # trailing stop distance
     atr_trail_tight = 0.9  # tighter trail once trade is well in profit
@@ -163,6 +163,7 @@ def run_strategy(df):
     # Bollinger Band for volatility regime filter
     bb_period = 20
     bb_std = 2.0
+
 
     # --- Indicators ---
     df = df.copy()
@@ -213,7 +214,6 @@ def run_strategy(df):
     df["bb_width"] = (df["bb_upper"] - df["bb_lower"]) / df["bb_mid"].replace(0, np.nan)
     df["bb_width_ma"] = df["bb_width"].rolling(window=bb_period).mean()
 
-
     # --- Trade loop ---
     trades = []
     position = None
@@ -240,7 +240,6 @@ def run_strategy(df):
 
         bb_width = df["bb_width"].iloc[i]
         bb_width_avg = df["bb_width_ma"].iloc[i]
-
         uptrend = ema_f > ema_s
         downtrend = ema_f < ema_s
         strong_trend = adx > adx_threshold
