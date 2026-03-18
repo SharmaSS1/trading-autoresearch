@@ -148,11 +148,11 @@ def run_strategy(df):
     atr_trail_mult = 1.3   # trailing stop distance
     atr_trail_tight = 0.9  # tighter trail once trade is well in profit
     trail_tighten_threshold = 1.8  # tighten trail after price moves 1.8x ATR in favor
-    position_size = 290.0
+    position_size = 275.0
     max_hold_bars = 30      # max bars to hold a position
     breakeven_atr_mult = 1.0  # move stop to entry after price moves 1.0x ATR in favor
     vol_period = 20         # volume moving average period
-    vol_mult = 0.8          # volume must be >= 0.8x average (filter only low-volume bars)
+    vol_mult = 0.6          # volume must be >= 0.6x average (allow more trades)
     # RSI thresholds for pullback detection
     rsi_pullback_low = 42
     rsi_recover_low = 46
