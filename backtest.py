@@ -148,7 +148,7 @@ def run_strategy(df):
     atr_trail_mult = 1.3   # trailing stop distance
     atr_trail_tight = 0.9  # tighter trail once trade is well in profit
     trail_tighten_threshold = 1.8  # tighten trail after price moves 1.8x ATR in favor
-    position_size = 350.0
+    position_size = 268.0
     max_hold_bars = 22      # max bars to hold a position
     breakeven_atr_mult = 1.0  # move stop to entry after price moves 1.0x ATR in favor
     vol_period = 20         # volume moving average period
@@ -205,6 +205,8 @@ def run_strategy(df):
     minus_di = 100 * (minus_dm.ewm(span=adx_period, adjust=False).mean() / atr_smooth.replace(0, np.nan))
     dx = 100 * ((plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan))
     df["adx"] = dx.ewm(span=adx_period, adjust=False).mean().fillna(0)
+    df["plus_di"] = plus_di.fillna(0)
+    df["minus_di"] = minus_di.fillna(0)
 
     # Bollinger Bands for volatility width
     df["bb_mid"] = df["close"].rolling(window=bb_period).mean()
@@ -241,12 +243,17 @@ def run_strategy(df):
 
         bb_width = df["bb_width"].iloc[i]
         bb_width_avg = df["bb_width_ma"].iloc[i]
+        pdi = df["plus_di"].iloc[i]
+        mdi = df["minus_di"].iloc[i]
         uptrend = ema_f > ema_s
         downtrend = ema_f < ema_s
         strong_trend = adx > adx_threshold
         volume_confirmed = vol >= vol_mult * vol_avg if pd.notna(vol_avg) else False
         # Volatility expanding = trending market (good for trend-following)
         vol_expanding = bb_width > bb_width_avg if pd.notna(bb_width_avg) and pd.notna(bb_width) else True
+        # DI alignment: confirms directional momentum
+        di_long = pdi > mdi
+        di_short = mdi > pdi
 
         # Track RSI pullback states
         if rsi < rsi_pullback_low:
