@@ -143,14 +143,14 @@ def run_strategy(df):
     atr_period = 14
     adx_period = 14
     adx_threshold = 22     # minimum ADX to confirm trend (stricter)
-    atr_sl_mult = 1.7      # stop loss = 1.7x ATR
-    atr_tp_mult = 4.0      # take profit = 4x ATR
-    atr_trail_mult = 1.4   # trailing stop distance
-    atr_trail_tight = 1.0  # tighter trail once trade is well in profit
-    trail_tighten_threshold = 2.0  # tighten trail after price moves 2x ATR in favor
+    atr_sl_mult = 1.5      # stop loss = 1.5x ATR (tighter to reduce loss variance)
+    atr_tp_mult = 3.5      # take profit = 3.5x ATR
+    atr_trail_mult = 1.3   # trailing stop distance
+    atr_trail_tight = 0.9  # tighter trail once trade is well in profit
+    trail_tighten_threshold = 1.8  # tighten trail after price moves 1.8x ATR in favor
     position_size = 1000.0
-    max_hold_bars = 25      # max bars to hold a position
-    breakeven_atr_mult = 1.2  # move stop to entry after price moves 1.2x ATR in favor
+    max_hold_bars = 22      # max bars to hold a position
+    breakeven_atr_mult = 1.0  # move stop to entry after price moves 1.0x ATR in favor
     vol_period = 20         # volume moving average period
     vol_mult = 0.8          # volume must be >= 0.8x average (filter only low-volume bars)
 
@@ -212,6 +212,7 @@ def run_strategy(df):
     df["bb_lower"] = df["bb_mid"] - bb_std * df["bb_std"]
     df["bb_width"] = (df["bb_upper"] - df["bb_lower"]) / df["bb_mid"].replace(0, np.nan)
     df["bb_width_ma"] = df["bb_width"].rolling(window=bb_period).mean()
+
 
     # --- Trade loop ---
     trades = []
