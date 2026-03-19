@@ -164,6 +164,8 @@ def run_strategy(df):
     atr_trail_tight = 1.0  # tighter trail once trade is well in profit
     trail_tighten_threshold = 1.8  # tighten trail after price moves 1.8x ATR in favor
     position_size = 22000.0
+    partial_tp_atr_mult = 2.2  # take partial profit at 2.2x ATR
+    partial_tp_fraction = 0.4  # close 40% of position at partial TP
     max_hold_bars = 30      # max bars to hold a position
     breakeven_atr_mult = 0.52  # move stop to entry after price moves 0.52x ATR in favor
     vol_period = 20         # volume moving average period
@@ -240,6 +242,7 @@ def run_strategy(df):
     tp_price = None
     best_price = None
     current_size = position_size
+    partial_taken = False
     warmup = slow_ema + 20
 
     # Track RSI pullback state
@@ -304,6 +307,18 @@ def run_strategy(df):
                 if be_stop > stop_price:
                     stop_price = be_stop
 
+            # Partial profit-taking: lock in some gains at partial_tp level
+            partial_tp_price = entry_price + partial_tp_atr_mult * atr
+            if not partial_taken and close >= partial_tp_price:
+                partial_size = current_size * partial_tp_fraction
+                trades.append({
+                    "entry_idx": entry_idx, "exit_idx": i,
+                    "entry_price": entry_price, "exit_price": close,
+                    "direction": "long", "size": partial_size,
+                })
+                current_size -= partial_size
+                partial_taken = True
+
             hit_stop = close <= stop_price
             hit_tp = close >= tp_price
             time_exit = (i - entry_idx) >= max_hold_bars
@@ -331,6 +346,7 @@ def run_strategy(df):
                     consecutive_losses += 1
                 last_trade_exit = i
                 position = None
+                partial_taken = False
 
         elif position == "short":
             if close < best_price:
@@ -348,6 +364,18 @@ def run_strategy(df):
                 be_stop = entry_price
                 if be_stop < stop_price:
                     stop_price = be_stop
+
+            # Partial profit-taking: lock in some gains at partial_tp level
+            partial_tp_price = entry_price - partial_tp_atr_mult * atr
+            if not partial_taken and close <= partial_tp_price:
+                partial_size = current_size * partial_tp_fraction
+                trades.append({
+                    "entry_idx": entry_idx, "exit_idx": i,
+                    "entry_price": entry_price, "exit_price": close,
+                    "direction": "short", "size": partial_size,
+                })
+                current_size -= partial_size
+                partial_taken = True
 
             hit_stop = close >= stop_price
             hit_tp = close <= tp_price
@@ -376,6 +404,7 @@ def run_strategy(df):
                     consecutive_losses += 1
                 last_trade_exit = i
                 position = None
+                partial_taken = False
 
         # Entry logic: RSI pullback within trend + volatility expansion
         if position is None:
