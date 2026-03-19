@@ -159,11 +159,11 @@ def run_strategy(df):
     adx_period = 14
     adx_threshold = 25     # minimum ADX to confirm trend (stricter)
     atr_sl_mult = 1.1      # stop loss = 1.1x ATR
-    atr_tp_mult = 4.0      # take profit = 4.0x ATR
-    atr_trail_mult = 1.3   # trailing stop distance
-    atr_trail_tight = 1.0  # tighter trail once trade is well in profit
-    trail_tighten_threshold = 1.8  # tighten trail after price moves 1.8x ATR in favor
-    position_size = 22000.0
+    atr_tp_mult = 3.5      # take profit = 3.5x ATR (tighter to capture more consistently)
+    atr_trail_mult = 1.1   # trailing stop distance (tighter for more consistent exits)
+    atr_trail_tight = 0.8  # tighter trail once trade is well in profit
+    trail_tighten_threshold = 1.5  # tighten trail after price moves 1.5x ATR in favor
+    position_size = 24000.0
     partial_tp_atr_mult = 2.2  # take partial profit at 2.2x ATR
     partial_tp_fraction = 0.4  # close 40% of position at partial TP
     max_hold_bars = 30      # max bars to hold a position
@@ -411,12 +411,8 @@ def run_strategy(df):
             # Cooldown after a losing trade: wait before re-entering
             in_cooldown = (not last_trade_won) and (i - last_trade_exit < cooldown_bars)
 
-            # Dynamic position sizing: scale with ADX strength
-            # ADX 25 -> 0.7x size, ADX 40+ -> 1.0x size
-            adx_scale = min(1.0, 0.7 + 0.3 * (adx - adx_threshold) / 15.0) if adx > adx_threshold else 0.7
-            # Reduce size after a loss to limit consecutive-loss drawdown
-            loss_scale = 0.70 if not last_trade_won and (i - last_trade_exit < 80) else 1.0
-            trade_size = position_size * adx_scale * loss_scale
+            # Fixed position sizing for more uniform returns (boosts Sharpe)
+            trade_size = position_size
 
             if not in_cooldown and uptrend and strong_trend and volume_confirmed and long_pullback_ready and rsi > rsi_recover_low and rsi < 70:
                 position = "long"
