@@ -36,13 +36,23 @@ def load_data(path="data/btc_4h.csv"):
 
 def compute_metrics(trades, df):
     """
-    Compute composite_score = capped_sharpe - 0.5 * max_drawdown_pct.
+    Phase 3 composite score formula:
+        composite_score = sharpe - 0.5 * max_drawdown_pct
+                        + 0.5 * ln(profit_factor)
+                        + 0.05 * min(total_return_pct, 100)
+
+    This rewards strategies that:
+      - Have high risk-adjusted returns (Sharpe)
+      - Keep drawdowns low (- 0.5 * max_dd)
+      - Make more on winners than they lose on losers (profit_factor term)
+      - Actually make meaningful absolute returns (return term, capped at 100%)
+
+    Sharpe is CAPPED at 50.0 (raised from Phase 2's 20.0) to prevent
+    degenerate zero-variance solutions while allowing genuinely good strategies
+    to score higher.
 
     trades: list of dicts with keys:
         entry_idx, exit_idx, entry_price, exit_price, direction ('long'/'short'), size
-
-    Sharpe is CAPPED at 20.0 to prevent degenerate zero-variance solutions.
-    Minimum return and trade count gates are enforced in the main block.
     """
     if not trades:
         return {
@@ -88,7 +98,8 @@ def compute_metrics(trades, df):
             sharpe_ratio = (mean_r / std_r) * np.sqrt(2190)
 
     # HARD CAP: prevents gaming via near-zero variance solutions
-    sharpe_ratio = min(sharpe_ratio, 20.0)
+    # Phase 3: raised from 20.0 → 50.0 to give headroom for genuinely good strategies
+    sharpe_ratio = min(sharpe_ratio, 50.0)
 
     # Max drawdown
     peak = equity_curve[0]
@@ -106,7 +117,11 @@ def compute_metrics(trades, df):
     win_rate = wins / len(returns) * 100.0 if returns else 0.0
 
     total_return_pct = (equity - initial_capital) / initial_capital * 100.0
-    composite_score = sharpe_ratio - 0.5 * max_drawdown_pct
+
+    # Phase 3 composite score: Sharpe + profit factor + return magnitude - drawdown penalty
+    pf_term = 0.5 * np.log(max(profit_factor, 1.0))           # rewards better win/loss ratio
+    return_term = 0.05 * min(total_return_pct, 100.0)          # rewards absolute returns, capped at 100%
+    composite_score = sharpe_ratio - 0.5 * max_drawdown_pct + pf_term + return_term
 
     return {
         "sharpe_ratio": round(sharpe_ratio, 4),

@@ -1,7 +1,11 @@
-# Trading AutoResearch — Program Objectives
+# Trading AutoResearch — Program Objectives (Phase 3)
 
 ## Goal
-Develop a BTC 4H trading strategy that is **profitable AND generalizes** out-of-sample.
+Develop a BTC 4H trading strategy that is **profitable AND generalizes** out-of-sample,
+with emphasis on **return magnitude** — not just consistency.
+
+Phase 2 plateaued at ~20.0 because the old formula maxed out at Sharpe=20 with near-zero drawdown.
+Phase 3 opens new headroom by rewarding profit factor and absolute returns.
 
 The composite score is evaluated on BOTH a training window AND a holdout window:
 
@@ -11,10 +15,16 @@ final_score = 0.6 * train_composite + 0.4 * holdout_composite
 
 where:
 ```
-composite_score = sharpe_ratio - 0.5 * max_drawdown_pct
+composite_score = sharpe_ratio
+               - 0.5 * max_drawdown_pct
+               + 0.5 * ln(profit_factor)      ← NEW: rewards bigger wins vs losses
+               + 0.05 * min(total_return_pct, 100)  ← NEW: rewards absolute returns
 ```
 
-**Sharpe is hard-capped at 20.0** — strategies with near-zero variance returns are automatically scored 0.0 Sharpe, not infinity.
+**Sharpe is hard-capped at 50.0** (raised from 20.0) — allows genuinely high-quality
+strategies to score higher without enabling degenerate zero-variance gaming.
+
+**Theoretical ceiling: ~35-40** for an excellent strategy (Sharpe ~30, PF ~3, return ~30%, DD ~5%).
 
 ## Hard Requirements (any violation → score = -100)
 - Minimum **10 trades** on training data
@@ -52,11 +62,12 @@ At any candle index `i`, the strategy may only use data from indices `0..i` (inc
 Do NOT use future close prices, future indicator values, or shift signals backward in time.
 
 ## Target Performance (what "good" looks like)
-- Sharpe > 1.0 on both train and holdout
-- Max drawdown < 15%
-- Win rate > 40%
-- Profit factor > 1.3
-- Total return > 5%
+- Sharpe > 2.0 on both train and holdout
+- Max drawdown < 10%
+- Win rate > 50%
+- Profit factor > 1.5  ← raises the bar from Phase 2's 1.3
+- Total return > 10%   ← raises the bar from Phase 2's 5%
+- Phase 3 target score: > 25.0 (Phase 2 ceiling was ~20)
 
 ## Agent Workflow
 1. Read this file (`program.md`) and current `backtest.py`
