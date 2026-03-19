@@ -161,9 +161,9 @@ def run_strategy(df):
     atr_sl_mult = 1.1      # stop loss = 1.1x ATR
     atr_tp_mult = 3.5      # take profit = 3.5x ATR
     atr_trail_mult = 0.6   # trailing stop distance
-    atr_trail_tight = 0.65  # tighter trail once trade is well in profit
-    trail_tighten_threshold = 1.2  # tighten trail after price moves 1.2x ATR in favor
-    position_size = 58200.0
+    atr_trail_tight = 0.56  # tighter trail once trade is well in profit
+    trail_tighten_threshold = 1.0  # tighten trail after price moves 1.0x ATR in favor
+    position_size = 56300.0
     partial_tp_atr_mult = 2.2  # take partial profit at 2.2x ATR
     partial_tp_fraction = 0.45  # close 45% of position at partial TP
     partial_tp2_atr_mult = 2.8  # second partial profit at 2.8x ATR
@@ -304,9 +304,9 @@ def run_strategy(df):
                 if trail_stop > stop_price:
                     stop_price = trail_stop
 
-            # Break-even: once price moves 1.2x ATR in favor, move stop to entry
+            # Break-even+: once price moves in favor, lock in small profit above entry
             if best_price >= entry_price + breakeven_atr_mult * atr:
-                be_stop = entry_price
+                be_stop = entry_price + 0.05 * atr  # lock in tiny profit
                 if be_stop > stop_price:
                     stop_price = be_stop
 
@@ -375,9 +375,9 @@ def run_strategy(df):
                 if trail_stop < stop_price:
                     stop_price = trail_stop
 
-            # Break-even: once price moves 1.2x ATR in favor, move stop to entry
+            # Break-even+: once price moves in favor, lock in small profit above entry
             if best_price <= entry_price - breakeven_atr_mult * atr:
-                be_stop = entry_price
+                be_stop = entry_price - 0.05 * atr  # lock in tiny profit
                 if be_stop < stop_price:
                     stop_price = be_stop
 
