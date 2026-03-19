@@ -160,14 +160,14 @@ def run_strategy(df):
     adx_threshold = 25     # minimum ADX to confirm trend (stricter)
     atr_sl_mult = 1.1      # stop loss = 1.1x ATR
     atr_tp_mult = 6.0      # take profit = 6.0x ATR
-    atr_trail_mult = 0.38  # trailing stop distance (tighter to lock profits)
+    atr_trail_mult = 0.33  # trailing stop distance (tighter to lock profits)
     atr_trail_tight = 0.56  # tighter trail once trade is well in profit
     trail_tighten_threshold = 0.85  # tighten trail after price moves 0.85x ATR in favor
-    position_size = 52700.0
+    position_size = 56200.0
     partial_tp_atr_mult = 2.2  # take partial profit at 2.2x ATR
-    partial_tp_fraction = 0.50  # close 50% of position at partial TP
-    partial_tp2_atr_mult = 2.4  # second partial profit at 2.4x ATR (earlier second TP)
-    partial_tp2_fraction = 0.58  # close 58% of remaining position at second partial TP
+    partial_tp_fraction = 0.25  # close 25% of position at partial TP
+    partial_tp2_atr_mult = 2.6  # second partial profit at 2.6x ATR
+    partial_tp2_fraction = 0.70  # close 70% of remaining position at second partial TP
     max_hold_bars = 22      # max bars to hold a position (shorter to reduce variance)
     breakeven_atr_mult = 0.15  # move stop to entry after price moves 0.15x ATR in favor (faster breakeven)
     vol_period = 20         # volume moving average period
@@ -251,9 +251,12 @@ def run_strategy(df):
     partial2_taken = False
     warmup = slow_ema + 20
 
-    # Track RSI pullback state
+    # Track RSI pullback state with age tracking
     long_pullback_ready = False
     short_pullback_ready = False
+    long_pullback_bar = 0
+    short_pullback_bar = 0
+    max_pullback_age = 10  # pullback signal expires after 10 bars
     last_trade_exit = -999
     last_trade_won = True
     consecutive_losses = 0
@@ -283,11 +286,19 @@ def run_strategy(df):
         di_long = pdi > mdi
         di_short = mdi > pdi
 
-        # Track RSI pullback states
+        # Track RSI pullback states with age
         if rsi < rsi_pullback_low:
             long_pullback_ready = True
+            long_pullback_bar = i
         if rsi > rsi_pullback_high:
             short_pullback_ready = True
+            short_pullback_bar = i
+
+        # Expire stale pullback signals
+        if long_pullback_ready and (i - long_pullback_bar) > max_pullback_age:
+            long_pullback_ready = False
+        if short_pullback_ready and (i - short_pullback_bar) > max_pullback_age:
+            short_pullback_ready = False
 
         # Reset pullback flags if trend reverses
         if not uptrend:
@@ -446,7 +457,7 @@ def run_strategy(df):
             # ATR-normalized position sizing: target fixed risk per trade
             # Scale inversely with ATR% so per-trade returns are more uniform → boosts Sharpe
             atr_pct = atr / close if close > 0 else 0.01
-            target_risk_pct = 0.013  # target ~1.3% risk per unit (lower to reduce DD)
+            target_risk_pct = 0.015  # target ~1.5% risk per unit
             normalized_size = position_size * (target_risk_pct / max(atr_pct * atr_sl_mult, 0.001))
             # Scale down when ATR is elevated vs recent average (reduce risk in volatile periods)
             atr_avg = df["atr_ma"].iloc[i]
@@ -461,13 +472,16 @@ def run_strategy(df):
                 loss_scale = max(0.6, 1.0 - 0.2 * consecutive_losses)
                 normalized_size *= loss_scale
             # Clamp to avoid extreme sizing
-            trade_size = max(min(normalized_size, position_size * 1.08), position_size * 0.75)
+            trade_size = max(min(normalized_size, position_size * 1.0), position_size * 0.80)
 
             # Extension filter: skip if price is too far from slow EMA (overextended)
             ema_dist_pct = abs(close - ema_s) / ema_s * 100.0 if ema_s > 0 else 0
             not_overextended = ema_dist_pct < 11.0  # skip entries when price >11% from slow EMA
+            # Minimum EMA separation: avoid entries when trend is barely established
+            ema_gap_pct = abs(ema_f - ema_s) / ema_s * 100.0 if ema_s > 0 else 0
+            trend_established = ema_gap_pct > 0.05  # need at least 0.05% EMA separation
 
-            if not in_cooldown and uptrend and strong_trend and volume_confirmed and long_pullback_ready and rsi > rsi_recover_low and rsi < 70 and not_overextended:
+            if not in_cooldown and uptrend and strong_trend and volume_confirmed and long_pullback_ready and rsi > rsi_recover_low and rsi < 70 and not_overextended and trend_established:
                 position = "long"
                 entry_price = close
                 entry_idx = i
@@ -477,7 +491,7 @@ def run_strategy(df):
                 long_pullback_ready = False
                 current_size = trade_size
 
-            elif not in_cooldown and downtrend and strong_trend and volume_confirmed and short_pullback_ready and rsi < rsi_recover_high and rsi > 30 and not_overextended:
+            elif not in_cooldown and downtrend and strong_trend and volume_confirmed and short_pullback_ready and rsi < rsi_recover_high and rsi > 30 and not_overextended and trend_established:
                 position = "short"
                 entry_price = close
                 entry_idx = i
