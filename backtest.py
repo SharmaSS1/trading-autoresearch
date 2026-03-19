@@ -309,7 +309,9 @@ def run_strategy(df):
             time_exit = (i - entry_idx) >= max_hold_bars
             # Exit if trend reverses (EMA cross)
             trend_exit = ema_f < ema_s and (i - entry_idx) >= 4
-            if hit_stop or hit_tp or time_exit or trend_exit:
+            # RSI profit-taking: exit when RSI hits overbought extreme and trade is profitable
+            rsi_exit = rsi > 76 and close > entry_price and (i - entry_idx) >= 3
+            if hit_stop or hit_tp or time_exit or trend_exit or rsi_exit:
                 # Use stop/tp price when those levels trigger (stop order fills)
                 if hit_stop:
                     exit_px = stop_price
@@ -352,7 +354,9 @@ def run_strategy(df):
             time_exit = (i - entry_idx) >= max_hold_bars
             # Exit if trend reverses (EMA cross)
             trend_exit = ema_f > ema_s and (i - entry_idx) >= 3
-            if hit_stop or hit_tp or time_exit or trend_exit:
+            # RSI profit-taking: exit when RSI hits oversold extreme and trade is profitable
+            rsi_exit = rsi < 22 and close < entry_price and (i - entry_idx) >= 3
+            if hit_stop or hit_tp or time_exit or trend_exit or rsi_exit:
                 # Use stop/tp price when those levels trigger (stop order fills)
                 if hit_stop:
                     exit_px = stop_price
