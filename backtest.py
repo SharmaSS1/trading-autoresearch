@@ -160,16 +160,16 @@ def run_strategy(df):
     adx_threshold = 25     # minimum ADX to confirm trend (stricter)
     atr_sl_mult = 1.1      # stop loss = 1.1x ATR
     atr_tp_mult = 6.0      # take profit = 6.0x ATR
-    atr_trail_mult = 0.6   # trailing stop distance
+    atr_trail_mult = 0.38  # trailing stop distance (tighter to lock profits)
     atr_trail_tight = 0.56  # tighter trail once trade is well in profit
-    trail_tighten_threshold = 1.0  # tighten trail after price moves 1.0x ATR in favor
+    trail_tighten_threshold = 0.85  # tighten trail after price moves 0.85x ATR in favor
     position_size = 52700.0
     partial_tp_atr_mult = 2.2  # take partial profit at 2.2x ATR
     partial_tp_fraction = 0.50  # close 50% of position at partial TP
-    partial_tp2_atr_mult = 2.8  # second partial profit at 2.8x ATR
-    partial_tp2_fraction = 0.52  # close 52% of remaining position at second partial TP
-    max_hold_bars = 25      # max bars to hold a position (shorter to reduce variance)
-    breakeven_atr_mult = 0.20  # move stop to entry after price moves 0.2x ATR in favor (faster breakeven)
+    partial_tp2_atr_mult = 2.4  # second partial profit at 2.4x ATR (earlier second TP)
+    partial_tp2_fraction = 0.58  # close 58% of remaining position at second partial TP
+    max_hold_bars = 22      # max bars to hold a position (shorter to reduce variance)
+    breakeven_atr_mult = 0.15  # move stop to entry after price moves 0.15x ATR in favor (faster breakeven)
     vol_period = 20         # volume moving average period
     vol_mult = 0.5          # volume must be >= 0.5x average (allow more trades)
     # RSI thresholds for pullback detection
@@ -237,6 +237,7 @@ def run_strategy(df):
     df["atr_ma"] = df["atr"].rolling(window=atr_ma_period).mean()
 
 
+
     # --- Trade loop ---
     trades = []
     position = None
@@ -256,7 +257,7 @@ def run_strategy(df):
     last_trade_exit = -999
     last_trade_won = True
     consecutive_losses = 0
-    cooldown_bars = 3  # bars to wait after a loss before re-entering
+    cooldown_bars = 4  # bars to wait after a loss before re-entering
 
     for i in range(warmup, len(df) - 1):
         close = df["close"].iloc[i]
@@ -455,12 +456,16 @@ def run_strategy(df):
                     # Reduce size proportionally when ATR is >130% of average
                     vol_scale = 1.3 / atr_ratio
                     normalized_size *= vol_scale
+            # Reduce size after consecutive losses to limit drawdown
+            if consecutive_losses > 0:
+                loss_scale = max(0.6, 1.0 - 0.2 * consecutive_losses)
+                normalized_size *= loss_scale
             # Clamp to avoid extreme sizing
             trade_size = max(min(normalized_size, position_size * 1.08), position_size * 0.75)
 
             # Extension filter: skip if price is too far from slow EMA (overextended)
             ema_dist_pct = abs(close - ema_s) / ema_s * 100.0 if ema_s > 0 else 0
-            not_overextended = ema_dist_pct < 12.0  # skip entries when price >12% from slow EMA
+            not_overextended = ema_dist_pct < 11.0  # skip entries when price >11% from slow EMA
 
             if not in_cooldown and uptrend and strong_trend and volume_confirmed and long_pullback_ready and rsi > rsi_recover_low and rsi < 70 and not_overextended:
                 position = "long"

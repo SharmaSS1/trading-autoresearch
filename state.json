@@ -1,6 +1,6 @@
 {
-  "best_score": 56.5455,
-  "iteration": 67,
+  "best_score": 56.5878,
+  "iteration": 92,
   "phase": 3,
   "phase_note": "Phase 3: score formula now includes profit_factor and total_return terms. Sharpe cap raised 20->50. Fresh start from Phase 2 best strategy (EMA21/55 + RSI pullback + ADX + ATR trailing).",
   "run_history": [
@@ -57,6 +57,11 @@
     {
       "iteration": 67,
       "score": 56.5455,
+      "result": "kept"
+    },
+    {
+      "iteration": 92,
+      "score": 56.5878,
       "result": "kept"
     }
   ]
