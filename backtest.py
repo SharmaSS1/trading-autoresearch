@@ -173,9 +173,10 @@ def run_strategy(df):
     """
     Phase 4 long+short trend-following: EMA crossover + RSI pullback + EMA bounce + BB squeeze.
 
-    Iter 47: Remove RSI profit-taking exits entirely — let trailing stop + EMA floor
-    manage exits. Tighten accelerated trail (1.2→1.0 ATR). Soften trend_exit to
-    require ≥5 bars in trade before forcing exit on losing EMA cross.
+    Iter 67: Add time-based trailing stop decay — after a trade has been open for
+    time_decay_start bars, progressively tighten the trail multiplier toward a minimum.
+    This locks in profits on longer-running trades. Also tighten EMA floor buffer
+    and slightly increase risk_pct since DD headroom exists (~2.7% vs 1% penalty).
     """
     # --- Parameters ---
     fast_ema = 21
@@ -187,7 +188,7 @@ def run_strategy(df):
     adx_threshold = 15
     atr_sl_mult = 2.0
     atr_trail_mult = 1.6
-    risk_pct = 0.014
+    risk_pct = 0.016
     max_hold_bars = 80
     cooldown_bars = 0
 
@@ -237,6 +238,13 @@ def run_strategy(df):
 
     # EMA trailing stop floor: once trade is in profit, use fast EMA as stop floor
     ema_trail_floor_trigger = 0.8  # ATRs of profit before engaging EMA floor
+
+    # Time-based trailing stop decay: after time_decay_start bars, tighten trail
+    # multiplier linearly from current value toward time_decay_min_mult over
+    # time_decay_duration bars
+    time_decay_start = 20  # Bars before decay begins
+    time_decay_duration = 25  # Bars over which to decay
+    time_decay_min_mult = 0.7  # Minimum trail multiplier at full decay
 
     # --- Indicators ---
     df = df.copy()
@@ -389,17 +397,24 @@ def run_strategy(df):
 
             if close > best_price:
                 best_price = close
-                # Tighten trail once in significant profit
-                profit_atrs = (best_price - entry_price) / entry_atr if entry_atr > 0 else 0
-                curr_trail = accel_trail_mult if profit_atrs >= profit_accel_trigger else atr_trail_mult
-                trail_stop = best_price - curr_trail * atr
-                if trail_stop > stop_price:
-                    stop_price = trail_stop
+            # Tighten trail once in significant profit
+            profit_atrs = (best_price - entry_price) / entry_atr if entry_atr > 0 else 0
+            curr_trail = accel_trail_mult if profit_atrs >= profit_accel_trigger else atr_trail_mult
+
+            # Time-based decay: after time_decay_start bars, tighten trail
+            bars_in_trade = i - entry_idx
+            if bars_in_trade > time_decay_start:
+                decay_progress = min(1.0, (bars_in_trade - time_decay_start) / time_decay_duration)
+                curr_trail = curr_trail - (curr_trail - time_decay_min_mult) * decay_progress
+
+            trail_stop = best_price - curr_trail * atr
+            if trail_stop > stop_price:
+                stop_price = trail_stop
 
             # EMA trail floor: once in profit, use fast EMA as stop floor
             profit_atrs_curr = (close - entry_price) / entry_atr if entry_atr > 0 else 0
             if profit_atrs_curr >= ema_trail_floor_trigger:
-                ema_floor = ema_f - 0.3 * atr  # Small buffer below EMA
+                ema_floor = ema_f - 0.15 * atr  # Tighter buffer below EMA
                 if ema_floor > stop_price:
                     stop_price = ema_floor
 
@@ -437,17 +452,24 @@ def run_strategy(df):
 
             if close < best_price:
                 best_price = close
-                # Tighten trail once in significant profit
-                profit_atrs = (entry_price - best_price) / entry_atr if entry_atr > 0 else 0
-                curr_trail = accel_trail_mult if profit_atrs >= profit_accel_trigger else short_atr_trail_mult
-                trail_stop = best_price + curr_trail * atr
-                if trail_stop < stop_price:
-                    stop_price = trail_stop
+            # Tighten trail once in significant profit
+            profit_atrs = (entry_price - best_price) / entry_atr if entry_atr > 0 else 0
+            curr_trail = accel_trail_mult if profit_atrs >= profit_accel_trigger else short_atr_trail_mult
+
+            # Time-based decay for shorts
+            bars_in_trade = i - entry_idx
+            if bars_in_trade > time_decay_start:
+                decay_progress = min(1.0, (bars_in_trade - time_decay_start) / time_decay_duration)
+                curr_trail = curr_trail - (curr_trail - time_decay_min_mult) * decay_progress
+
+            trail_stop = best_price + curr_trail * atr
+            if trail_stop < stop_price:
+                stop_price = trail_stop
 
             # EMA trail floor for shorts: use fast EMA as ceiling once in profit
             profit_atrs_curr = (entry_price - close) / entry_atr if entry_atr > 0 else 0
             if profit_atrs_curr >= ema_trail_floor_trigger:
-                ema_ceil = ema_f + 0.3 * atr  # Small buffer above EMA
+                ema_ceil = ema_f + 0.15 * atr  # Tighter buffer above EMA
                 if ema_ceil < stop_price:
                     stop_price = ema_ceil
 
