@@ -139,11 +139,18 @@ def call_agent(dry_run=False):
 
 Make your change now by editing backtest.py directly."""
 
+    # Ensure node is in PATH (required for claude CLI)
+    import copy
+    env = copy.copy(os.environ)
+    node_bin = "/opt/homebrew/opt/node@22/bin"
+    if node_bin not in env.get("PATH", ""):
+        env["PATH"] = node_bin + ":" + env.get("PATH", "")
+
     try:
         result = subprocess.run(
             ["claude", "--print", "-p", prompt, "--allowedTools",
              "Read", "Edit", "Write", "Bash"],
-            capture_output=True, text=True, timeout=200
+            capture_output=True, text=True, timeout=200, env=env
         )
         if result.returncode != 0:
             print(f"  Agent call failed (rc={result.returncode})")
