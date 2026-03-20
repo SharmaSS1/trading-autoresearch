@@ -1,6 +1,6 @@
 {
-  "best_score": 1.3583,
-  "iteration": 5,
+  "best_score": 2.3978,
+  "iteration": 6,
   "phase": 4,
   "phase_note": "Phase 4: Reality-check layer. Win rate penalty (>70% or <35%), PF capped at 4x, too-clean DD penalty (<1%), Sharpe capped at 3.0, min 20 trades. Target: score > 8.0.",
   "run_history": [
@@ -22,6 +22,11 @@
     {
       "iteration": 5,
       "score": 1.3583,
+      "result": "kept"
+    },
+    {
+      "iteration": 6,
+      "score": 2.3978,
       "result": "kept"
     }
   ]

@@ -171,33 +171,42 @@ def compute_metrics(trades, df):
 
 def run_strategy(df):
     """
-    Phase 4 long-only trend-following: EMA crossover + RSI pullback.
+    Phase 4 long-only trend-following: EMA crossover + RSI pullback + EMA bounce.
 
-    Iter 6: Tighter trailing stop (2.5→1.8 ATR), volume confirmation filter,
-    earlier trend-reversal exit (no 5-bar minimum), and reduced risk per trade.
-    Goal: reduce holdout drawdown (9.22% → ~5%) which is the biggest score drag.
+    Iter 10: Remove fixed TP — let winners run via trailing stop + trend exit.
+    Tighten trailing stop from 1.8 to 1.5 ATR to lock profits. Increase max hold
+    from 40 to 60 bars to give trends more room. This should significantly boost
+    total return while maintaining realistic drawdown.
     """
     # --- Parameters ---
     fast_ema = 21
-    slow_ema = 55
+    slow_ema = 45
     rsi_period = 14
     atr_period = 14
     adx_period = 14
-    adx_threshold = 15          # low threshold to catch more trends
-    atr_sl_mult = 2.0           # stop loss at 2.0x ATR
-    atr_tp_mult = 4.0           # take profit at 4.0x ATR
-    atr_trail_mult = 1.8        # tighter trailing stop (was 2.5) to lock in profits
-    risk_per_trade = 150.0      # reduced from 200 to limit DD impact
-    max_hold_bars = 30          # slightly shorter max hold (was 35)
-    cooldown_bars = 1           # minimal cooldown
+    adx_threshold = 15
+    atr_sl_mult = 2.0
+    atr_trail_mult = 1.5
+    risk_per_trade = 180.0
+    max_hold_bars = 60
+    cooldown_bars = 1
 
     # RSI pullback thresholds
-    rsi_pullback_low = 48       # RSI dips below 48 in uptrend
-    rsi_recover_low = 50        # recover above 50 to enter long
+    rsi_pullback_low = 46
+    rsi_recover_low = 48
 
-    max_pullback_age = 15       # pullback signal valid for 15 bars
+    max_pullback_age = 15
 
-    vol_avg_period = 20         # volume moving average period
+    vol_avg_period = 20
+
+    # EMA bounce parameters
+    ema_bounce_pct = 1.5
+
+    # Breakeven stop: move stop to entry once trade is up by this many ATRs
+    breakeven_atr_trigger = 1.2
+
+    # Momentum breakout: lookback for new high
+    breakout_lookback = 20
 
     # --- Indicators ---
     df = df.copy()
@@ -240,16 +249,20 @@ def run_strategy(df):
     # Volume moving average for confirmation
     df["vol_ma"] = df["volume"].rolling(window=vol_avg_period, min_periods=1).mean()
 
+    # Rolling high for breakout detection
+    df["high_roll"] = df["high"].rolling(window=breakout_lookback, min_periods=breakout_lookback).max()
+
     # --- Trade loop ---
     trades = []
     position = None
     entry_price = None
     entry_idx = None
     stop_price = None
-    tp_price = None
     best_price = None
     position_size = 0.0
-    warmup = slow_ema + 20
+    entry_atr = 0.0
+    breakeven_activated = False
+    warmup = max(slow_ema + 20, breakout_lookback + 5)
 
     # RSI pullback tracking
     long_pullback_ready = False
@@ -285,18 +298,20 @@ def run_strategy(df):
         if rsi < rsi_pullback_low:
             long_pullback_ready = True
             long_pullback_bar = i
-
-        # Expire stale pullback signals
         if long_pullback_ready and (i - long_pullback_bar) > max_pullback_age:
             long_pullback_ready = False
-
-        # Reset pullback if trend reverses
         if not uptrend:
             long_pullback_ready = False
 
         # === EXIT LOGIC ===
         if position == "long":
-            # Update trailing stop
+            # Breakeven stop: once trade is up by breakeven_atr_trigger * ATR,
+            # move stop to entry price to eliminate downside risk
+            if not breakeven_activated and close >= entry_price + breakeven_atr_trigger * entry_atr:
+                breakeven_activated = True
+                if entry_price > stop_price:
+                    stop_price = entry_price
+
             if close > best_price:
                 best_price = close
                 trail_stop = best_price - atr_trail_mult * atr
@@ -304,16 +319,12 @@ def run_strategy(df):
                     stop_price = trail_stop
 
             hit_stop = close <= stop_price
-            hit_tp = close >= tp_price
             time_exit = (i - entry_idx) >= max_hold_bars
-            # Trend reversal exit — no minimum hold delay (was 5 bars)
             trend_exit = ema_f < ema_s
 
-            if hit_stop or hit_tp or time_exit or trend_exit:
+            if hit_stop or time_exit or trend_exit:
                 if hit_stop:
                     exit_px = stop_price
-                elif hit_tp:
-                    exit_px = tp_price
                 else:
                     exit_px = close
                 trades.append({
@@ -326,18 +337,14 @@ def run_strategy(df):
 
         # === ENTRY LOGIC (long only) ===
         if position is None:
-            # Simple cooldown: wait a few bars between trades
             if (i - last_trade_exit) < cooldown_bars:
                 continue
 
-            # Extension filter: skip if price too far from slow EMA
             ema_dist_pct = abs(close - ema_s) / ema_s * 100.0 if ema_s > 0 else 0
             not_overextended = ema_dist_pct < 15.0
-
-            # Volume confirmation: require volume at least 70% of average
             vol_ok = vol >= vol_ma * 0.7
 
-            # Signal 1: RSI pullback recovery in uptrend (original)
+            # Signal 1: RSI pullback recovery in uptrend
             pullback_signal = (uptrend and strong_trend and long_pullback_ready
                                and rsi > rsi_recover_low and rsi < 70
                                and not_overextended and vol_ok)
@@ -347,8 +354,23 @@ def run_strategy(df):
                             and rsi > 40 and rsi < 70
                             and not_overextended and vol_ok)
 
-            if pullback_signal or cross_signal:
-                # ATR-based position sizing: risk fixed $ per trade
+            # Signal 3: EMA bounce — price pulls back near fast EMA in uptrend
+            ema_f_dist_pct = (close - ema_f) / ema_f * 100.0 if ema_f > 0 else 999
+            bounce_signal = (uptrend and strong_trend
+                             and 0 <= ema_f_dist_pct <= ema_bounce_pct
+                             and rsi > 44 and rsi < 58
+                             and not_overextended and vol_ok
+                             and (i - last_trade_exit) >= 4)
+
+            # Signal 4: Momentum breakout — price makes new N-bar high in uptrend
+            prev_high_roll = df["high_roll"].iloc[i - 1] if i > 0 else 0
+            breakout_signal = (uptrend and strong_trend
+                               and close > prev_high_roll
+                               and rsi > 50 and rsi < 72
+                               and not_overextended and vol_ok
+                               and (i - last_trade_exit) >= 3)
+
+            if pullback_signal or cross_signal or bounce_signal or breakout_signal:
                 stop_dist = atr_sl_mult * atr
                 position_size = risk_per_trade / (stop_dist / close) if stop_dist > 0 else 0
                 if position_size <= 0:
@@ -356,9 +378,10 @@ def run_strategy(df):
                 position = "long"
                 entry_price = close
                 entry_idx = i
+                entry_atr = atr
                 stop_price = close - stop_dist
-                tp_price = close + atr_tp_mult * atr
                 best_price = close
+                breakeven_activated = False
                 long_pullback_ready = False
 
     # Close open position at end
