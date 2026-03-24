@@ -179,10 +179,12 @@ def run_strategy(df):
     Exit: RSI > 65 or stop-loss hit.
     Long-only. One position at a time.
 
-    Change vs iter 2: Added 5-bar cooldown after a stop-loss exit.
-    Back-to-back stop-outs cluster during corrections, inflating max drawdown.
-    Skipping re-entry for 5 days after a stop avoids knife-catching in
-    a trending-down market that the SMA(200) filter hasn't yet blocked.
+    Change vs iter 3: Extended cooldown after stop-loss from 5 → 20 bars.
+    The 10.66% train max drawdown was caused by clustered stop-outs during
+    multi-week corrections (2020 COVID, 2022 bear market): stop out, wait 5
+    days, re-enter, stop out again. A 20-bar (~4 calendar week) cooldown
+    forces the strategy to wait out the typical correction before re-entering,
+    directly targeting the -5.33 composite score penalty from high drawdown.
     """
     trades = []
     n = len(df)
@@ -215,7 +217,7 @@ def run_strategy(df):
     rsi_entry = 45.0        # buy when RSI drops below this (raised to get 20+ trades with SMA filter)
     rsi_exit = 65.0         # sell when RSI recovers above this
     stop_loss_pct = 0.03    # stop at 3% below entry
-    cooldown_bars = 5       # wait 5 bars after a stop-loss before allowing re-entry
+    cooldown_bars = 20      # wait 20 bars (~4 weeks) after a stop-loss before allowing re-entry
 
     position = None  # None or dict with entry info
     cooldown_until = -1     # bar index after which we can re-enter
