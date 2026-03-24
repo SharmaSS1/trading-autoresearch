@@ -175,23 +175,24 @@ def compute_metrics(trades, df):
 def run_strategy(df):
     """
     AGENT-MODIFIABLE: mean reversion starter on SPY daily bars.
-    Entry: RSI(14) < 45 AND price > SMA(200) — oversold in uptrend only.
-    Exit: RSI > 55, trailing stop.
+    Entry: RSI(14) < 45 AND price > SMA(200) AND volume > 20-day avg volume.
+    Exit: RSI > 65, trailing stop.
     Long-only. One position at a time.
 
-    Change vs iter 4: Tighten trailing stop from 3% → 2%.
-    With a 3% trail, a run of consecutive stop-outs each burns ~3% of equity,
-    producing 7%+ drawdowns. Tightening to 2% caps each individual loss more
-    aggressively — the score formula penalises drawdown heavily (-0.5 × MaxDD%)
-    so cutting it from 6.74% saves more in the penalty than it costs in profit
-    per trade. Primary exits still happen via RSI > 65; the trailing stop is
-    mainly a safety valve, so tightening it doesn't significantly hurt winners.
+    Change vs iter 18: Add volume confirmation filter.
+    Requiring volume > 20-day average volume at entry filters out quiet drift-down
+    days (low conviction) in favour of high-volume selloffs (panic/capitulation).
+    Panic selling is the ideal mean-reversion setup: lots of forced sellers pushing
+    price below fair value, followed by snap-back. Low-volume dips can continue
+    indefinitely. This should improve win rate and profit factor without cutting
+    trade count too severely (high-volume down days cluster with RSI dips).
     """
     trades = []
     n = len(df)
     close = df["close"].values
     high = df["high"].values
     low = df["low"].values
+    volume = df["volume"].values
 
     # --- RSI(14) ---
     period = 14
@@ -214,6 +215,12 @@ def run_strategy(df):
     for i in range(sma_period - 1, n):
         sma200[i] = np.mean(close[i - sma_period + 1 : i + 1])
 
+    # --- 20-day average volume ---
+    vol_period = 20
+    vol_avg = np.zeros(n)
+    for i in range(vol_period - 1, n):
+        vol_avg[i] = np.mean(volume[i - vol_period + 1 : i + 1])
+
     # --- Strategy parameters ---
     rsi_entry = 45.0        # buy when RSI drops below this
     rsi_exit = 65.0         # sell when RSI recovers above this
@@ -226,9 +233,10 @@ def run_strategy(df):
 
     for i in range(max(period + 1, sma_period), n):
         if position is None:
-            # Entry: RSI oversold AND price above 200-day SMA AND not in cooldown
+            # Entry: RSI oversold AND price above 200-day SMA AND volume spike AND not in cooldown
             in_uptrend = close[i] > sma200[i]
-            if i > cooldown_until and rsi[i] > 0 and rsi[i] < rsi_entry and in_uptrend:
+            high_volume = vol_avg[i] > 0 and volume[i] > vol_avg[i]
+            if i > cooldown_until and rsi[i] > 0 and rsi[i] < rsi_entry and in_uptrend and high_volume:
                 position = {
                     "entry_idx": i,
                     "entry_price": close[i],
