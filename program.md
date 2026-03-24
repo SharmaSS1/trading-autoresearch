@@ -1,127 +1,102 @@
-# Trading AutoResearch — Program Objectives (Phase 4)
+# Trading AutoResearch — ETF Mean Reversion Program
 
-## Goal
-Develop a BTC 4H trading strategy that is **profitable AND generalizes** out-of-sample,
-with realistic performance characteristics that would hold up in live trading.
+## Objective
+Find a mean-reversion strategy on liquid US ETFs (SPY, QQQ, IWM) using daily bars.
+Target: Sharpe 1.5–2.5 on out-of-sample data.
 
-Phase 3 plateaued at ~57.3 but the numbers were unrealistic: 97% win rate, 0% drawdown,
-profit factor of 109x. These are overfit artifacts, not real edge. Phase 4 enforces
-reality-check constraints so the optimizer must find a **robust** strategy, not a
-perfectly-fitted one.
+WARNING: Crypto Sharpe targets (10–20+) are NOT the goal. ETF Sharpe > 3.0 is suspicious overfit.
+Sharpe 1.5–2.5 is genuinely excellent for a daily ETF strategy.
 
-The composite score is evaluated on BOTH a training window AND a holdout window:
+## Strategy Type: Mean Reversion
+Mean reversion = price has drifted too far from its average and will snap back.
+Classic signals: RSI oversold, price below Bollinger Band, large gap down, etc.
 
-```
-final_score = 0.6 * train_composite + 0.4 * holdout_composite
-```
+Direction: long-only (we do not short ETFs — no margin, no complexity).
+Use bracket orders (stop-loss + take-profit) where possible.
 
-where:
-```
-composite_score = sharpe_ratio (capped at 3.0)
-               - 0.5 * max_drawdown_pct
-               + 0.5 * ln(min(profit_factor, 4.0))   ← PF capped at 4x
-               + 0.05 * min(total_return_pct, 100)
-               - win_rate_penalty                     ← NEW: punishes >70% or <35% WR
-               - too_clean_penalty                    ← NEW: punishes <1% drawdown
-```
+## Instruments
+- SPY (S&P 500 ETF) — highest liquidity, tightest spread
+- QQQ (Nasdaq 100 ETF) — higher volatility, more mean-reversion opportunities
+- IWM (Russell 2000 ETF) — smaller caps, more volatility
 
-**Sharpe is hard-capped at 3.0** — live Sharpe >3 is exceptional, >5 is degenerate.
-
-**Theoretical ceiling: ~12-15** for a genuinely excellent real-world strategy.
-
-## Reality-Check Penalties (Phase 4 — these did NOT exist in Phase 3)
-
-### Win Rate Penalty
-- Win rate > 70%: penalty = (win_rate% - 70) × 0.5 per point above 70
-  - Example: 80% WR → -5 pts; 97% WR → -13.5 pts
-  - Why: Real trend-following strategies win 45-65% of the time. Higher = overfit.
-- Win rate < 35%: penalty = (35 - win_rate%) × 0.3 per point below 35
-
-### Profit Factor Cap
-- PF contribution = 0.5 × ln(min(PF, 4.0)) — no reward beyond PF=4
-- Max PF contribution: 0.5 × ln(4) ≈ 0.69 pts
-- Why: Real good strategies have PF 1.5-3. PF=109 is meaningless (30 cherry-picked trades).
-
-### "Too Clean" Drawdown Penalty
-- Max drawdown < 1%: penalty = (1.0 - max_dd%) × 5.0 (up to -5 pts for 0% DD)
-- Why: Zero drawdown over 14 months signals the strategy is only entering when it KNOWS
-  it'll win — which means it's look-ahead biased or simply not trading enough.
-
-## Hard Requirements (any violation → score = -100)
-- Minimum **20 trades** on training data (raised from 10 — need statistical significance)
-- Minimum **1% total return** on training data
-- Minimum **profit factor ≥ 1.0** on training data (gross profit > gross loss)
-
-## Overfitting Penalty
-If holdout composite_score < -20, a penalty of **-40** is applied to the raw train score.
-Strategies must generalize — it is not enough to win on the training window only.
+The agent focuses on ONE ticker at a time (start with SPY).
 
 ## Data
-- **3,479 candles** of BTC/USD 4H OHLCV (March 2024 → March 2026)
-- **Train window:** first 75% of data (~2,609 candles, ~14 months)
-- **Holdout window:** last 25% (~870 candles, ~3.5 months) — never used during optimization
-- All candles have real volume (zero-volume rows are filtered out)
+- Daily OHLCV bars via yfinance (10 years history)
+- File: data/etf_daily.csv, column `symbol` = SPY/QQQ/IWM
+- Load SPY rows: `df[df['symbol'] == 'SPY']`
+- Train: first 80% of bars. Holdout: last 20% (never used during optimization)
 
-## What the Agent CAN Change (in run_strategy only)
-- Entry and exit logic (signals, conditions, timing)
-- Technical indicators and their parameters (EMA periods, RSI thresholds, etc.)
-- Adding new indicators (Bollinger Bands, MACD, ATR, volume filters, etc.)
+## Scoring Formula
+score = 0.6 * train_composite + 0.4 * holdout_composite
+
+composite_score = sharpe_ratio (capped at 3.0)
+               - 0.5 * max_drawdown_pct
+               + 0.5 * ln(min(profit_factor, 4.0))
+               + 0.05 * min(total_return_pct, 100)
+               - win_rate_penalty
+               - too_clean_penalty
+
+Reality-check penalties (same as existing compute_metrics — DO NOT change compute_metrics):
+  - win_rate > 70%: penalty = (win_rate - 70) * 0.5
+  - win_rate < 35%: penalty = (35 - win_rate) * 0.3
+  - max_drawdown < 1%: penalty = (1.0 - max_dd) * 5.0
+
+Hard gates (score = -100 if violated):
+  - Minimum 20 trades on training data
+  - Minimum 1% total return
+  - Profit factor >= 1.0
+
+## ETF-Calibrated Target Performance
+- Sharpe 1.5–2.5 (excellent and realistic for daily ETF)
+- Max drawdown 5–20% (some drawdown = strategy is actually trading)
+- Win rate 45–65%
+- Profit factor 1.3–2.5
+- 30–150 trades per year (not too few = overfit, not too many = noise)
+- Score target: 2.0–5.0 (ETF range, NOT BTC range of 8–15)
+
+## Annualization
+Daily data: annualization factor = 252 trading days/year (NOT 2190, which was for BTC 4H bars).
+This is already set in the FIXED compute_metrics section.
+
+## What the Agent CAN Change (run_strategy only)
+- Entry and exit signal logic
+- Technical indicators and their parameters
 - Stop-loss and take-profit levels
-- Position sizing rules
-- Trade filters (volatility regimes, time-of-day, trend confirmation, etc.)
-- Combining multiple signals
+- Position sizing (long-only, max 1 position at a time)
+- Trade filters (volatility, trend confirmation, time filters)
+- Which ETF ticker to use (SPY recommended to start)
 
 ## What the Agent Must NOT Change
-- `load_data()` function
-- `compute_metrics()` function
+- load_data() function
+- compute_metrics() function
 - The main block (train/test split + scoring logic)
-- The `SCORE: <float>` output format (must be the last line of stdout)
-- Must not introduce look-ahead bias (no peeking at future candles)
+- The SCORE: <float> output format (must be last line of stdout)
+- Must not introduce look-ahead bias (no future data in signals)
 
-## No Look-Ahead Bias Rule
-At any candle index `i`, the strategy may only use data from indices `0..i` (inclusive).
-Do NOT use future close prices, future indicator values, or shift signals backward in time.
+## No Look-Ahead Bias
+At candle index i, only use data from indices 0..i.
+Never use shift(-1) on close prices or indicator values.
 
-## Target Performance (what "good" looks like in Phase 4)
-- Sharpe > 1.5 on both train and holdout (live-achievable)
-- Max drawdown 3-15% (some drawdown = the strategy is actually trading)
-- Win rate 45-65% (realistic for trend-following)
-- Profit factor 1.5-3.0 (big winners, manageable losers)
-- Total return > 20% on train
-- Phase 4 target score: > 8.0 (the formula is tighter; a score of 8-12 is excellent)
+## Change ONE Variable at a Time (Karpathy Rule)
+If you try multiple changes at once and the score drops, you won't know what caused it.
+Change exactly one thing per iteration: one indicator, one threshold, one structural idea.
 
-## Key Insight for Phase 4
-The current strategy (iter 172) scores ~2.1 under Phase 4 rules because:
-1. Win rate of 97% → -13.5 win rate penalty
-2. 0% drawdown → -5 too_clean penalty
-3. Sharpe capped at 3.0 (was 50.0)
-4. PF capped at 4.0 (was uncapped)
+## Good Starting Ideas for Mean Reversion on SPY Daily
+- RSI(14) < 30 → buy; RSI > 70 → sell
+- Price closes below lower Bollinger Band → buy; price returns to middle band → sell
+- 3-day consecutive decline of >1% each day → buy; 3% gain → sell
+- ATR-based stop loss at entry_price - 2 * ATR(14)
 
-The agent needs to find strategies that TRADE MORE, ACCEPT SOME LOSSES, and WIN
-at a reasonable rate — not strategies that sit on the sidelines until they're
-certain and make 30 cherry-picked trades in 14 months.
+## Bad Ideas to Avoid
+- Shorting (we are long-only)
+- Leverage or margin
+- Intraday signals (we use daily close prices)
+- Look-ahead bias (no future data)
+- Rewriting the entire file (change ONE thing)
 
-## Agent Workflow
-1. Read this file (`program.md`) and current `backtest.py`
-2. Check `state.json` for score history — what has worked, what hasn't
-3. Analyze the current strategy and its weaknesses (too few trades, too high WR)
-4. Propose ONE focused improvement aimed at: more trades, realistic win rate, some drawdown
-5. Edit only the `run_strategy()` function in `backtest.py`
-6. The runner will execute, evaluate train+holdout, and score
-
-## Example Good Changes for Phase 4
-- "Loosen entry filters to generate 40-80 trades over 14 months"
-- "Reduce ADX threshold from 25 to 15 to trade more market conditions"
-- "Widen RSI pullback thresholds to catch more setups"
-- "Accept a stop loss rate of ~35-40% — that's healthy trend-following behavior"
-- "Use ATR-based stops at 2-3x ATR (not 1.1x) to give trades room to breathe"
-- "Remove partial TP logic — let winners run, accept some variance"
-
-## Example Bad Changes
-- Rewriting the entire file from scratch
-- Changing compute_metrics(), load_data(), or the main block
-- Using `df['close'].shift(-1)` (look-ahead bias)
-- Tightening filters further (would reduce trades below 20 gate)
-- Setting position_size to 0 or negative
-- Removing the SCORE output line
-- Making changes outside run_strategy()
+## Score History Interpretation
+Score 0–1.5: strategy is not working yet (too few trades, or losing money)
+Score 1.5–2.5: good! This is the target range. Paper-trade this config.
+Score 2.5–3.5: excellent. Verify out-of-sample, then consider going live.
+Score > 3.5: suspicious. Check for overfit. Walk-forward test before trusting.
