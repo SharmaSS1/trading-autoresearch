@@ -179,13 +179,13 @@ def run_strategy(df):
     Exit: RSI > 65, trailing stop.
     Long-only. One position at a time.
 
-    Change vs iter 18: Add volume confirmation filter.
-    Requiring volume > 20-day average volume at entry filters out quiet drift-down
-    days (low conviction) in favour of high-volume selloffs (panic/capitulation).
-    Panic selling is the ideal mean-reversion setup: lots of forced sellers pushing
-    price below fair value, followed by snap-back. Low-volume dips can continue
-    indefinitely. This should improve win rate and profit factor without cutting
-    trade count too severely (high-volume down days cluster with RSI dips).
+    Change vs iter 19: Tighten trailing stop from 2% to 1.5%.
+    The train max drawdown (~6-7%) is the biggest score drag — it costs -3+ points
+    in the composite formula (weight: -0.5 * max_dd_pct). A tighter trailing stop
+    exits losing trades sooner, limiting how far any single trade can go against us.
+    For mean reversion on SPY, a 1.5% intraday swing from the rolling high is a
+    meaningful reversal signal. The risk: some winning trades get stopped early.
+    But reducing drawdown should more than compensate via the composite formula.
     """
     trades = []
     n = len(df)
@@ -224,7 +224,7 @@ def run_strategy(df):
     # --- Strategy parameters ---
     rsi_entry = 45.0        # buy when RSI drops below this
     rsi_exit = 65.0         # sell when RSI recovers above this
-    trail_pct = 0.02        # trailing stop: 2% below rolling intra-trade high
+    trail_pct = 0.015       # trailing stop: 1.5% below rolling intra-trade high (tightened from 2%)
     cooldown_bars = 20      # wait 20 bars (~4 weeks) after a trailing-stop hit
 
     position = None  # None or dict with entry info
