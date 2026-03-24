@@ -2,3 +2,4 @@ pandas
 numpy
 requests
 ta
+yfinance>=0.2.0
