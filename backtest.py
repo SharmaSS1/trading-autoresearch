@@ -175,8 +175,14 @@ def compute_metrics(trades, df):
 def run_strategy(df):
     """
     AGENT-MODIFIABLE: mean reversion starter on SPY daily bars.
-    Entry: RSI(14) < 30 (oversold). Exit: RSI > 60 or stop-loss hit.
+    Entry: RSI(14) < 45 AND price > SMA(200) — oversold in uptrend only.
+    Exit: RSI > 65 or stop-loss hit.
     Long-only. One position at a time.
+
+    Change vs iter 2: Added 5-bar cooldown after a stop-loss exit.
+    Back-to-back stop-outs cluster during corrections, inflating max drawdown.
+    Skipping re-entry for 5 days after a stop avoids knife-catching in
+    a trending-down market that the SMA(200) filter hasn't yet blocked.
     """
     trades = []
     n = len(df)
@@ -199,17 +205,26 @@ def run_strategy(df):
             rs = avg_gain / avg_loss if avg_loss > 1e-10 else 100.0
             rsi[i + 1] = 100.0 - (100.0 / (1.0 + rs))
 
+    # --- SMA(200) trend filter ---
+    sma_period = 200
+    sma200 = np.zeros(n)
+    for i in range(sma_period - 1, n):
+        sma200[i] = np.mean(close[i - sma_period + 1 : i + 1])
+
     # --- Strategy parameters ---
-    rsi_entry = 35.0        # buy when RSI drops below this
-    rsi_exit = 60.0         # sell when RSI recovers above this
-    stop_loss_pct = 0.05    # hard stop at 5% below entry
+    rsi_entry = 45.0        # buy when RSI drops below this (raised to get 20+ trades with SMA filter)
+    rsi_exit = 65.0         # sell when RSI recovers above this
+    stop_loss_pct = 0.03    # stop at 3% below entry
+    cooldown_bars = 5       # wait 5 bars after a stop-loss before allowing re-entry
 
     position = None  # None or dict with entry info
+    cooldown_until = -1     # bar index after which we can re-enter
 
-    for i in range(period + 1, n):
+    for i in range(max(period + 1, sma_period), n):
         if position is None:
-            # Entry: RSI oversold
-            if rsi[i] > 0 and rsi[i] < rsi_entry:
+            # Entry: RSI oversold AND price above 200-day SMA AND not in cooldown
+            in_uptrend = close[i] > sma200[i]
+            if i > cooldown_until and rsi[i] > 0 and rsi[i] < rsi_entry and in_uptrend:
                 position = {
                     "entry_idx": i,
                     "entry_price": close[i],
@@ -218,12 +233,18 @@ def run_strategy(df):
                 }
         else:
             exit_price = None
+            stopped_out = False
             # Exit 1: RSI recovered
             if rsi[i] > rsi_exit:
                 exit_price = close[i]
             # Exit 2: stop-loss hit (use low of day)
             elif low[i] <= position["stop"]:
                 exit_price = position["stop"]
+                stopped_out = True
+
+            if exit_price is not None:
+                if stopped_out:
+                    cooldown_until = i + cooldown_bars  # freeze entries after a stop-out
 
             if exit_price is not None:
                 trades.append({

@@ -1,1 +1,11 @@
-{"best_score": null, "iteration": 0, "run_history": []}
+{
+  "best_score": -4.945,
+  "iteration": 1,
+  "run_history": [
+    {
+      "iteration": 1,
+      "score": -4.945,
+      "result": "kept"
+    }
+  ]
+}
