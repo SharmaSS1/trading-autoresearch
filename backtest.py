@@ -176,15 +176,16 @@ def run_strategy(df):
     """
     AGENT-MODIFIABLE: mean reversion starter on SPY daily bars.
     Entry: RSI(14) < 45 AND price > SMA(200) — oversold in uptrend only.
-    Exit: RSI > 65 or stop-loss hit.
+    Exit: RSI > 55, trailing stop.
     Long-only. One position at a time.
 
-    Change vs iter 3: Extended cooldown after stop-loss from 5 → 20 bars.
-    The 10.66% train max drawdown was caused by clustered stop-outs during
-    multi-week corrections (2020 COVID, 2022 bear market): stop out, wait 5
-    days, re-enter, stop out again. A 20-bar (~4 calendar week) cooldown
-    forces the strategy to wait out the typical correction before re-entering,
-    directly targeting the -5.33 composite score penalty from high drawdown.
+    Change vs iter 4: Tighten trailing stop from 3% → 2%.
+    With a 3% trail, a run of consecutive stop-outs each burns ~3% of equity,
+    producing 7%+ drawdowns. Tightening to 2% caps each individual loss more
+    aggressively — the score formula penalises drawdown heavily (-0.5 × MaxDD%)
+    so cutting it from 6.74% saves more in the penalty than it costs in profit
+    per trade. Primary exits still happen via RSI > 65; the trailing stop is
+    mainly a safety valve, so tightening it doesn't significantly hurt winners.
     """
     trades = []
     n = len(df)
@@ -214,13 +215,14 @@ def run_strategy(df):
         sma200[i] = np.mean(close[i - sma_period + 1 : i + 1])
 
     # --- Strategy parameters ---
-    rsi_entry = 45.0        # buy when RSI drops below this (raised to get 20+ trades with SMA filter)
+    rsi_entry = 45.0        # buy when RSI drops below this
     rsi_exit = 65.0         # sell when RSI recovers above this
-    stop_loss_pct = 0.03    # stop at 3% below entry
-    cooldown_bars = 20      # wait 20 bars (~4 weeks) after a stop-loss before allowing re-entry
+    trail_pct = 0.02        # trailing stop: 2% below rolling intra-trade high
+    cooldown_bars = 20      # wait 20 bars (~4 weeks) after a trailing-stop hit
 
     position = None  # None or dict with entry info
     cooldown_until = -1     # bar index after which we can re-enter
+    trade_high = 0.0        # rolling high since entry (for trailing stop)
 
     for i in range(max(period + 1, sma_period), n):
         if position is None:
@@ -230,18 +232,23 @@ def run_strategy(df):
                 position = {
                     "entry_idx": i,
                     "entry_price": close[i],
-                    "stop": close[i] * (1.0 - stop_loss_pct),
                     "size": 10000.0,  # fixed dollar size
                 }
+                trade_high = close[i]
         else:
+            # Update trailing high using today's high
+            if high[i] > trade_high:
+                trade_high = high[i]
+            trailing_stop = trade_high * (1.0 - trail_pct)
+
             exit_price = None
             stopped_out = False
             # Exit 1: RSI recovered
             if rsi[i] > rsi_exit:
                 exit_price = close[i]
-            # Exit 2: stop-loss hit (use low of day)
-            elif low[i] <= position["stop"]:
-                exit_price = position["stop"]
+            # Exit 2: trailing stop hit (use low of day)
+            elif low[i] <= trailing_stop:
+                exit_price = trailing_stop
                 stopped_out = True
 
             if exit_price is not None:
