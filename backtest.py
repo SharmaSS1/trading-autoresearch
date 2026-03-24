@@ -224,8 +224,8 @@ def run_strategy(df):
     # --- Strategy parameters ---
     rsi_entry = 45.0        # buy when RSI drops below this
     rsi_exit = 65.0         # sell when RSI recovers above this
-    trail_pct = 0.015       # trailing stop: 1.5% below rolling intra-trade high (tightened from 2%)
-    cooldown_bars = 20      # wait 20 bars (~4 weeks) after a trailing-stop hit
+    trail_pct = 0.02        # trailing stop: 2% below rolling intra-trade high
+    cooldown_bars = 8       # wait 8 bars (~1.5 weeks) after a trailing-stop hit
 
     position = None  # None or dict with entry info
     cooldown_until = -1     # bar index after which we can re-enter
