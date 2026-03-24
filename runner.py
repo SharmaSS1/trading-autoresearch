@@ -142,13 +142,12 @@ Make your change now by editing backtest.py directly."""
     # Ensure node is in PATH (required for claude CLI)
     import copy
     env = copy.copy(os.environ)
-    node_bin = "/opt/homebrew/opt/node@22/bin"
-    if node_bin not in env.get("PATH", ""):
-        env["PATH"] = node_bin + ":" + env.get("PATH", "")
+    # Node is in PATH on Linux (no Homebrew path needed)
 
     try:
         result = subprocess.run(
-            ["claude", "--print", "-p", prompt, "--allowedTools",
+            ["claude", "--print", "--model", "claude-sonnet-4-6",
+             "-p", prompt, "--allowedTools",
              "Read", "Edit", "Write", "Bash"],
             capture_output=True, text=True, timeout=200, env=env
         )
