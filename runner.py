@@ -17,6 +17,7 @@ import re
 STATE_FILE = "state.json"
 BACKTEST_SCRIPT = "backtest.py"
 PROGRAM_FILE = "program.md"
+INSTRUCTION_FILE = "next_instruction.md"  # sonnet writes here; haiku reads here
 
 
 def load_state():
@@ -94,80 +95,137 @@ def git_revert_backtest():
 
 
 def extract_run_strategy(backtest_path):
-    """Extract only the run_strategy() function — the AGENT-MODIFIABLE section.
-    Sending the full file wastes ~2500 tokens on fixed boilerplate every iteration.
-    """
+    """Extract only the run_strategy() function — haiku only needs to see this."""
     with open(backtest_path) as f:
         lines = f.readlines()
     start = next((i for i, l in enumerate(lines) if l.startswith("def run_strategy(")), None)
     if start is None:
-        return open(backtest_path).read()  # fallback: full file
+        return open(backtest_path).read()
     return "".join(lines[start:])
 
 
-def call_agent(dry_run=False):
-    """Call Claude CLI (haiku) to propose the next change to run_strategy() in backtest.py."""
-    if dry_run:
-        print("  [dry-run] Skipping agent call")
-        return True
-
-    # Only send run_strategy() — not the full file (saves ~2500 tokens/iter)
+def call_haiku(instruction):
+    """Haiku is the hands: it receives one specific instruction and implements it.
+    No thinking, no analysis — just execute what sonnet told it to do.
+    """
     run_strategy_code = extract_run_strategy(BACKTEST_SCRIPT)
 
-    state = load_state()
-    history_summary = ""
-    if state["run_history"]:
-        recent = [h for h in state["run_history"][-8:] if h["score"] is not None]
-        history_summary = "\n".join(
-            f"  iter {h['iteration']}: score={h['score']} ({h['result']})"
-            for h in recent
-        )
+    prompt = f"""Implement this exact change to run_strategy() in backtest.py:
 
-    prompt = f"""You are a trading strategy researcher. Improve the ETF mean-reversion strategy below.
+INSTRUCTION: {instruction}
 
-RULES (read carefully):
-- Edit ONLY run_strategy() in backtest.py. DO NOT touch load_data(), compute_metrics(), or main block.
-- Make ONE change (one indicator tweak, one threshold, one structural idea). Not a full rewrite.
-- Long-only. No shorting. No look-ahead bias (no shift(-1) on close/signals).
-- Target: Sharpe 1.5-2.5. Score > 5.0 is suspicious overfit — avoid.
-- Data: SPY daily bars. annualization=252.
+RULES:
+- Edit ONLY the run_strategy() function in backtest.py. Nothing else.
+- No look-ahead bias (no df['close'].shift(-1) or future data).
+- Long-only (no short positions).
+- Implement the instruction precisely and nothing more.
 
-SCORE TARGET: 1.5-2.5 (ETF range). Current best: {state['best_score']}
-
-RECENT HISTORY (last 8 attempts):
-{history_summary if history_summary else "  (first iteration)"}
-
-CURRENT run_strategy() — this is the ONLY section you may edit:
+CURRENT run_strategy():
 ```python
 {run_strategy_code}
 ```
 
-Make your ONE change to run_strategy() in backtest.py now."""
+Make the change now."""
 
     import copy
     env = copy.copy(os.environ)
-
     try:
         result = subprocess.run(
             ["claude", "--print", "--model", "claude-haiku-4-5-20251001",
              "-p", prompt, "--allowedTools", "Edit"],
-            capture_output=True, text=True, timeout=300, env=env
+            capture_output=True, text=True, timeout=120, env=env
         )
         if result.returncode != 0:
-            print(f"  Agent call failed (rc={result.returncode})")
-            if result.stderr:
-                print(f"  stderr: {result.stderr[:300]}")
+            print(f"  Haiku failed (rc={result.returncode}): {result.stderr[:200]}")
             return False
         return True
     except FileNotFoundError:
         print("  'claude' CLI not found")
         return False
     except subprocess.TimeoutExpired:
-        print("  Agent call timed out (>300s)")
+        print("  Haiku timed out (>120s)")
         return False
     except Exception as e:
-        print(f"  Agent error: {e}")
+        print(f"  Haiku error: {e}")
         return False
+
+
+def call_sonnet(score, stdout, improved, state):
+    """Sonnet is the brain: it reviews what just happened and writes the next instruction.
+    Called after every backtest result. Writes to next_instruction.md.
+    """
+    run_strategy_code = extract_run_strategy(BACKTEST_SCRIPT)
+
+    history_summary = ""
+    if state["run_history"]:
+        recent = [h for h in state["run_history"][-10:] if h["score"] is not None]
+        history_summary = "\n".join(
+            f"  iter {h['iteration']}: score={h['score']} ({h['result']})"
+            for h in recent
+        )
+
+    result_desc = f"IMPROVED to {score:.4f}" if improved else f"WORSE ({score:.4f} < best {state['best_score']:.4f}) — reverted"
+
+    prompt = f"""You are the strategy director for an ETF mean-reversion trading bot.
+A coding agent (haiku) just made a change to run_strategy() and ran the backtest.
+
+RESULT: {result_desc}
+BACKTEST OUTPUT:
+{stdout}
+
+SCORE HISTORY (recent):
+{history_summary if history_summary else "  (first iteration)"}
+
+CURRENT run_strategy() (after this iteration's change):
+```python
+{run_strategy_code}
+```
+
+CONTEXT:
+- Strategy: mean reversion on SPY daily bars, long-only
+- Target score: 1.5-2.5 (ETF Sharpe range). Current best: {state['best_score']}
+- Score > 5.0 = overfit, will be rejected automatically
+- Haiku implements exactly what you tell it — keep instructions simple and specific
+
+YOUR TASK: Write ONE specific instruction for the next iteration.
+The instruction must be concrete and unambiguous (e.g. "Change rsi_entry from 30 to 25",
+"Add a 50-day SMA filter: only enter if close > SMA50", "Replace stop_loss_pct 0.05 with ATR-based stop at 2*ATR(14)").
+
+Respond with ONLY the instruction. No explanation. No preamble. One or two sentences max."""
+
+    import copy
+    env = copy.copy(os.environ)
+    try:
+        result = subprocess.run(
+            ["claude", "--print", "--model", "claude-sonnet-4-6",
+             "-p", prompt],
+            capture_output=True, text=True, timeout=60, env=env
+        )
+        if result.returncode != 0:
+            print(f"  Sonnet failed (rc={result.returncode})")
+            return False
+        instruction = result.stdout.strip()
+        with open(INSTRUCTION_FILE, "w") as f:
+            f.write(instruction)
+        print(f"  -> Sonnet: {instruction}")
+        return True
+    except FileNotFoundError:
+        print("  'claude' CLI not found")
+        return False
+    except subprocess.TimeoutExpired:
+        print("  Sonnet timed out (>60s)")
+        return False
+    except Exception as e:
+        print(f"  Sonnet error: {e}")
+        return False
+
+
+def load_instruction():
+    """Load sonnet's instruction for this iteration."""
+    if os.path.exists(INSTRUCTION_FILE):
+        with open(INSTRUCTION_FILE) as f:
+            return f.read().strip()
+    return None
 
 
 def main():
@@ -192,20 +250,29 @@ def main():
     else:
         print()
 
+    # If no instruction yet, ask sonnet to generate the first one
+    if not args.dry_run and not load_instruction():
+        print("[init] Sonnet generating first instruction...")
+        state = load_state()
+        call_sonnet(state["best_score"], "(no prior result — first iteration)", False, state)
+
     for i in range(args.max_iters):
         iteration = start_iter + i + 1
-        # Pull latest program.md (allows remote edits from MTOI dashboard)
         try:
             subprocess.run(["git", "pull", "--quiet"], capture_output=True, timeout=15)
         except Exception:
-            pass  # non-fatal, continue with local version
+            pass
         print(f"[iter {iteration}]", end=" ")
 
         if not args.dry_run:
-            # Call agent to modify backtest.py
-            print("Calling agent...", end=" ")
-            if not call_agent(dry_run=False):
-                print("Agent failed, skipping iteration")
+            instruction = load_instruction()
+            if not instruction:
+                print("No instruction from sonnet, skipping")
+                time.sleep(2)
+                continue
+            print(f"haiku...", end=" ")
+            if not call_haiku(instruction):
+                print("Haiku failed, skipping iteration")
                 time.sleep(2)
                 continue
 
@@ -276,6 +343,11 @@ def main():
 
         if args.dry_run:
             break
+
+        # Sonnet reviews result and writes next instruction
+        print(f"  sonnet reviewing...", end=" ")
+        state = load_state()
+        call_sonnet(score, stdout, improved, state)
 
         time.sleep(2)
 
