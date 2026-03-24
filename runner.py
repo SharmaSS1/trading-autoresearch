@@ -93,63 +93,65 @@ def git_revert_backtest():
                     capture_output=True)
 
 
+def extract_run_strategy(backtest_path):
+    """Extract only the run_strategy() function — the AGENT-MODIFIABLE section.
+    Sending the full file wastes ~2500 tokens on fixed boilerplate every iteration.
+    """
+    with open(backtest_path) as f:
+        lines = f.readlines()
+    start = next((i for i, l in enumerate(lines) if l.startswith("def run_strategy(")), None)
+    if start is None:
+        return open(backtest_path).read()  # fallback: full file
+    return "".join(lines[start:])
+
+
 def call_agent(dry_run=False):
-    """Call Claude CLI to propose the next change to backtest.py."""
+    """Call Claude CLI (haiku) to propose the next change to run_strategy() in backtest.py."""
     if dry_run:
         print("  [dry-run] Skipping agent call")
         return True
 
-    # Read current files for context
-    with open(PROGRAM_FILE) as f:
-        program = f.read()
-    with open(BACKTEST_SCRIPT) as f:
-        backtest = f.read()
+    # Only send run_strategy() — not the full file (saves ~2500 tokens/iter)
+    run_strategy_code = extract_run_strategy(BACKTEST_SCRIPT)
 
     state = load_state()
     history_summary = ""
     if state["run_history"]:
-        recent = state["run_history"][-5:]
+        recent = [h for h in state["run_history"][-8:] if h["score"] is not None]
         history_summary = "\n".join(
             f"  iter {h['iteration']}: score={h['score']} ({h['result']})"
             for h in recent
         )
 
-    prompt = f"""You are an AI trading strategy researcher. Your task is to improve the strategy in backtest.py.
+    prompt = f"""You are a trading strategy researcher. Improve the ETF mean-reversion strategy below.
 
-## Objectives (from program.md):
-{program}
+RULES (read carefully):
+- Edit ONLY run_strategy() in backtest.py. DO NOT touch load_data(), compute_metrics(), or main block.
+- Make ONE change (one indicator tweak, one threshold, one structural idea). Not a full rewrite.
+- Long-only. No shorting. No look-ahead bias (no shift(-1) on close/signals).
+- Target: Sharpe 1.5-2.5. Score > 5.0 is suspicious overfit — avoid.
+- Data: SPY daily bars. annualization=252.
 
-## Current backtest.py:
+SCORE TARGET: 1.5-2.5 (ETF range). Current best: {state['best_score']}
+
+RECENT HISTORY (last 8 attempts):
+{history_summary if history_summary else "  (first iteration)"}
+
+CURRENT run_strategy() — this is the ONLY section you may edit:
 ```python
-{backtest}
+{run_strategy_code}
 ```
 
-## Current best score: {state['best_score']}
-## Iteration: {state['iteration'] + 1}
-## Recent history:
-{history_summary if history_summary else "  (no history yet)"}
+Make your ONE change to run_strategy() in backtest.py now."""
 
-## Instructions:
-1. Analyze the current strategy
-2. Propose ONE focused improvement (not a full rewrite)
-3. Edit backtest.py in place with your change
-4. Only modify the AGENT-MODIFIABLE section
-5. Do NOT change load_data(), compute_metrics(), or the SCORE output
-6. Do NOT introduce look-ahead bias
-
-Make your change now by editing backtest.py directly."""
-
-    # Ensure node is in PATH (required for claude CLI)
     import copy
     env = copy.copy(os.environ)
-    # Node is in PATH on Linux (no Homebrew path needed)
 
     try:
         result = subprocess.run(
-            ["claude", "--print", "--model", "claude-sonnet-4-6",
-             "-p", prompt, "--allowedTools",
-             "Read", "Edit", "Write", "Bash"],
-            capture_output=True, text=True, timeout=200, env=env
+            ["claude", "--print", "--model", "claude-haiku-4-5-20251001",
+             "-p", prompt, "--allowedTools", "Edit"],
+            capture_output=True, text=True, timeout=300, env=env
         )
         if result.returncode != 0:
             print(f"  Agent call failed (rc={result.returncode})")
@@ -158,10 +160,10 @@ Make your change now by editing backtest.py directly."""
             return False
         return True
     except FileNotFoundError:
-        print("  'claude' CLI not found — install Claude Code to enable agent loop")
+        print("  'claude' CLI not found")
         return False
     except subprocess.TimeoutExpired:
-        print("  Agent call timed out (>120s)")
+        print("  Agent call timed out (>300s)")
         return False
     except Exception as e:
         print(f"  Agent error: {e}")
@@ -235,10 +237,25 @@ def main():
                     print(f"  {line}")
 
         if improved and not args.dry_run:
-            old_best = best_score
-            best_score = score
-            commit_msg = git_commit_improvement(old_best, score, iteration)
-            print(f"  -> committed: {commit_msg}")
+            # Sanity check: ETF Sharpe should never exceed ~5. Higher = overfit.
+            if score > 5.0:
+                print(f"  -> OVERFIT GUARD: score {score:.4f} > 5.0 — rejecting and reverting")
+                git_revert_backtest()
+                improved = False
+            else:
+                old_best = best_score
+                best_score = score
+                # Save state BEFORE commit so state.json in git is accurate
+                state["best_score"] = best_score
+                state["iteration"] = iteration
+                state["run_history"].append({
+                    "iteration": iteration,
+                    "score": round(score, 4),
+                    "result": "kept",
+                })
+                save_state(state)
+                commit_msg = git_commit_improvement(old_best, score, iteration)
+                print(f"  -> committed: {commit_msg}")
         elif improved and args.dry_run:
             best_score = score
             print("  -> [dry-run] would commit")
@@ -246,14 +263,16 @@ def main():
             git_revert_backtest()
             print("  -> reverted backtest.py")
 
-        state["best_score"] = best_score
-        state["iteration"] = iteration
-        state["run_history"].append({
-            "iteration": iteration,
-            "score": round(score, 4),
-            "result": "kept" if improved else "reverted",
-        })
-        save_state(state)
+        # Save state for non-improved iterations (improved case saved before commit above)
+        if not improved:
+            state["best_score"] = best_score
+            state["iteration"] = iteration
+            state["run_history"].append({
+                "iteration": iteration,
+                "score": round(score, 4),
+                "result": "reverted",
+            })
+            save_state(state)
 
         if args.dry_run:
             break
